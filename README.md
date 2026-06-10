@@ -19,29 +19,26 @@ Engineering teams make architectural decisions (ADRs), but those decisions live 
 Developer Input
       │
       ▼
- Gemini 2.0 Flash          ← reasoning agent
+ SSE streaming        ← real-time pipeline stage events
       │
-      ▼
- text-embedding-004         ← 768-dim vector embedding
- (google-genai SDK)
+ text-embedding-004   ← 768-dim vector (output_dimensionality=768, cached)
       │
-      ▼
- MongoDB Atlas              ← $vectorSearch (cosine similarity)
- Vector Search              ← index: vector_index | threshold: 0.72
+ MongoDB Atlas        ← $vectorSearch (cosine, index: vector_index, threshold: 0.72)
+ (mongomock demo)     ← Atlas-compatible API when no URI provided
       │
-      ▼
- Conflict Modal             ← surfaces conflicting ADR to developer
- + Live Memory Patch        ← diff view of evolving team knowledge
+ Gemini 2.0 Flash     ← structured JSON analysis (response_mime_type=application/json)
+  response_schema:    ← summary + implications[] + tags[] + risk: LOW|MEDIUM|HIGH|CRITICAL
+      │
+ Conflict Modal       ← severity badge + override-with-reason + MongoDB resolution store
+ + Live Memory Patch  ← diff view of evolving team knowledge
 ```
 
-### Agent Pipeline
+### Agent Pipeline (SSE streamed)
 
-1. **Input**: Developer describes a new task or technical decision
-2. **Gemini Agent** (`gemini-2.0-flash`): Analyzes architectural implications
-3. **Embedding** (`text-embedding-004`, 768-dim): Embeds task into vector space
-4. **MongoDB Atlas Vector Search**: Cosine similarity against stored team ADRs
-5. **Conflict Detection**: similarity ≥ 0.72 → surface the conflicting ADR
-6. **Session Memory**: `GET /memory/{session_id}` — exposes agent's accumulated knowledge
+1. **`embedding`** — Gemini text-embedding-004 embeds the task (768-dim, cached)
+2. **`search`** — MongoDB Atlas `$vectorSearch` scans the ADR collection (cosine ≥ 0.72)
+3. **`reasoning`** — Gemini 2.0 Flash returns structured JSON: summary, implications, tags, risk
+4. **`complete`** — Conflict modal with CRITICAL/HIGH/MEDIUM severity, or clear result
 
 ---
 
@@ -50,36 +47,48 @@ Developer Input
 | Component | Technology |
 |-----------|-----------|
 | Agent LLM | **Gemini 2.0 Flash** (`gemini-2.0-flash`) |
-| Embeddings | **Gemini text-embedding-004** (768-dim) |
+| Embeddings | **Gemini text-embedding-004** (768-dim, `output_dimensionality=768`) |
+| Structured output | `response_mime_type="application/json"` + `response_schema` |
 | Vector DB | **MongoDB Atlas Vector Search** (cosine, index: `vector_index`) |
-| SDK | `google-genai` (new SDK) with `google-generativeai` fallback |
+| Demo mode | **mongomock** (Atlas-compatible pymongo API, numpy vector scan) |
+| Decision store | MongoDB `decisions` + `sessions` + `resolutions` collections |
 
 ---
 
-## Demo
+## API Endpoints
 
-**Golden path** — type "Add Redis for session storage":
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/run` | Agent analysis + conflict detection (JSON) |
+| `POST` | `/run/stream` | Same — SSE streaming with staged progress events |
+| `POST` | `/decisions` | Add new ADR from natural language (Gemini extracts structure) |
+| `POST` | `/conflicts/resolve` | Record accept/override resolution in MongoDB |
+| `GET`  | `/health` | Backend mode, decision count, Gemini status |
+| `GET`  | `/memory/{session_id}` | Session decisions + MongoDB session entries |
+| `GET`  | `/decisions` | List all stored ADRs |
 
-1. DevMind analyzes the architectural implications via Gemini 2.0 Flash
-2. Vector search detects high similarity with ADR-007 (JWT stateless auth decision)
-3. Conflict modal surfaces: "Avoid Redis — team decided on stateless JWT 3 months ago"
-4. Live Memory Patching panel shows the diff updating team knowledge
+---
 
-The backend also exposes three endpoints:
-- `POST /run` — agent + conflict detection
-- `GET /health` — shows MongoDB connection status + conflict mode
-- `GET /memory/{session_id}` — exposes all decisions the agent has learned per session
-- `GET /decisions` — lists all stored ADRs (Atlas or in-memory)
+## Demo Scenarios
+
+**Scenario 1 — Conflict detection**
+Type: `"Add Redis for session storage"` → SSE streams 3 stages → HIGH severity conflict modal → ADR-007 surfaces → user acknowledges or overrides with reason (stored in MongoDB)
+
+**Scenario 2 — Team learning**
+Click "Add ADR" → type: `"We decided to use Redis as our caching layer for hot reads"` → Gemini extracts structured ADR → stored in MongoDB with 768-dim embedding → future "Add Redis for caching" queries will resolve cleanly (different use case)
+
+**Scenario 3 — Conflict resolution audit**
+Override scenario 1 with reason → `POST /conflicts/resolve` stores `{adr_id, resolution: "overridden", reason: "...", ts}` in `devmind.resolutions` — full audit trail
 
 ---
 
 ## Setup
 
-### MongoDB Atlas (Required for full MongoDB Track demo)
+### MongoDB Atlas (optional — mongomock is used automatically without a URI)
 
-1. Create a free M0 cluster at [cloud.mongodb.com](https://cloud.mongodb.com)
+1. Create free M0 cluster at [cloud.mongodb.com](https://cloud.mongodb.com)
 2. Database: `devmind` / Collection: `decisions`
-3. Create a **Vector Search Index** named `vector_index`:
+3. Create Vector Search Index named `vector_index`:
    ```json
    {
      "fields": [{
@@ -90,10 +99,7 @@ The backend also exposes three endpoints:
      }]
    }
    ```
-4. Add the connection string to `.env`:
-   ```
-   MONGODB_URI=mongodb+srv://USER:PASS@cluster.mongodb.net/
-   ```
+4. Add to `.env`: see `.credentials/` for connection string
 
 ### Backend (FastAPI — port 8080)
 
@@ -101,9 +107,11 @@ The backend also exposes three endpoints:
 cd backend
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env: add GEMINI_API_KEY and MONGODB_URI
+# Edit .env: add GEMINI_API_KEY (optional: MONGODB_URI for Atlas)
 python main.py
 ```
+
+Startup log shows active mode: `Atlas+Gemini`, `Demo+Gemini`, `Demo+keyword`, or `numpy+keyword`
 
 ### Frontend (React + Vite — port 5173)
 
@@ -121,19 +129,22 @@ npm run dev
 |-------|-----------|
 | Agent | Python 3.12 + FastAPI (port 8080) |
 | LLM | Gemini 2.0 Flash (`google-genai` SDK) |
-| Embeddings | Gemini text-embedding-004 (768-dim) |
-| Vector Store | **MongoDB Atlas Vector Search** (cosine, dim=768) |
-| Fallback | numpy cosine similarity (if Atlas unavailable) |
+| Structured output | `response_mime_type=application/json`, `response_schema` |
+| Embeddings | Gemini text-embedding-004 (768-dim, cached) |
+| Vector Store | MongoDB Atlas `$vectorSearch` / mongomock numpy scan |
+| Streaming | SSE (`POST /run/stream`) — 3 stage events before result |
 | Frontend | React 18 + Vite 6 |
 
 ---
 
 ## What Makes This Novel
 
-1. **Decision memory, not just search**: DevMind tracks *why* decisions were made, not just what was decided — the reasoning propagates into conflict warnings
-2. **Session memory API**: `GET /memory/{session_id}` exposes what the agent has learned — the agent is observable, not a black box
-3. **Live patching visualization**: Every task submission shows a real-time diff of how team memory evolves
-4. **Graceful degradation**: keyword fallback → numpy cosine → Atlas vector search (three-tier)
+1. **Decision memory, not just search**: DevMind tracks *why* decisions were made — the constraint propagates into conflict warnings with full Gemini-generated implications
+2. **Always-on MongoDB**: mongomock provides Atlas-compatible storage without requiring Atlas credentials — `decisions`, `sessions`, and `resolutions` are always written to MongoDB collections
+3. **ADR from natural language**: `POST /decisions` uses Gemini structured extraction to turn free-form text into searchable ADRs, embedding them in real time
+4. **Conflict resolution audit trail**: Override decisions are stored in `devmind.resolutions` with the developer's rationale — full governance chain
+5. **SSE streaming**: The 3-stage pipeline (embed → search → reason) is streamed live, making the AI reasoning process visible
+6. **Severity levels**: CRITICAL / HIGH / MEDIUM — cosine similarity score maps to operational impact
 
 ---
 
@@ -141,13 +152,14 @@ npm run dev
 
 ```
 backend/
-├── main.py              # FastAPI agent (POST /run, GET /memory, GET /decisions)
-├── requirements.txt     # google-genai + pymongo[srv] + fastapi
-└── .env.example         # GEMINI_API_KEY + MONGODB_URI
+├── main.py              # FastAPI agent — /run, /run/stream, /decisions, /conflicts/resolve
+├── requirements.txt     # google-genai + pymongo[srv] + mongomock + fastapi
+└── .env.example         # GEMINI_API_KEY + MONGODB_URI (both optional for demo)
 
 frontend/
 ├── src/
-│   └── App.jsx          # React UI — agent chat + conflict modal + live patch
+│   ├── App.jsx          # React UI — SSE streaming, analysis panel, severity, Add ADR
+│   └── index.css        # GCP dark theme + severity badges + risk display
 ├── package.json
 └── vite.config.js
 ```
