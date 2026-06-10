@@ -95,7 +95,7 @@ export default function App() {
         { type: 'minus', text: '-  // pending entry' },
         { type: 'plus',  text: `+  task: "${msg.slice(0, 45)}",` },
         { type: 'plus',  text: '+  status: "assigned",' },
-        { type: 'plus',  text: '+  embedding: "3072-dim · cosine stored"' },
+        { type: 'plus',  text: '+  embedding: "768-dim · cosine stored"' },
       ]);
 
       // Use real conflicts if returned; fall back to demo conflict for Redis queries
@@ -147,8 +147,8 @@ export default function App() {
         <div className="logo">
           <Shield color="var(--gcp-blue)" />
           DevMind — Engineering Memory
-          <span className="badge">Agent Builder + MongoDB</span>
-          <span className="tag-green">3072-DIM VECTORS</span>
+          <span className="badge">Gemini + MongoDB Atlas</span>
+          <span className="tag-green">768-DIM VECTORS</span>
           <span className="tag-dim">BUDGET: 12%</span>
         </div>
         <button className="btn" onClick={runDemo} disabled={loading}>
@@ -207,7 +207,7 @@ export default function App() {
 
             <div style={{ fontSize: '0.85rem', color: 'var(--text-dim)' }}>
               <Database size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }} />
-              Gemini Embedding 3072-dim · MongoDB Atlas Vector Search · cosine similarity
+              Gemini text-embedding-004 768-dim · MongoDB Atlas Vector Search · cosine similarity
             </div>
           </div>
 
