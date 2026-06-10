@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Search, Shield, Cpu, Activity, Database, CheckCircle, AlertTriangle, X, Plus, GitBranch } from 'lucide-react';
 import './index.css';
 
-const API = 'http://localhost:8080';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 // ─── ConflictModal ────────────────────────────────────────────────────────────
 function ConflictModal({ conflicts, sessionId, onDismiss }) {

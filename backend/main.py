@@ -522,7 +522,7 @@ def resolve_conflict(req: ResolveRequest):
             _mongo_resolutions.insert_one(doc)
         except Exception:
             pass
-    return {"status": "recorded", **{k: v for k, v in doc.items()}}
+    return {"status": "recorded", **{k: v for k, v in doc.items() if k != "_id"}}
 
 @app.get("/decisions")
 def list_decisions():
